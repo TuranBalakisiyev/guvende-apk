@@ -59,6 +59,13 @@ jobs:
           export ANDROIDAPI="33"
           export NDKAPI="21"
           export MAKEFLAGS="-j2"
+          export PIP_NO_BUILD_ISOLATION=1
+
+          HOSTPYTHON="$HOME/.local/share/python-for-android/build/other_builds/hostpython3/desktop/hostpython3/native-build/python3"
+          if [ -x "$HOSTPYTHON" ]; then
+            "$HOSTPYTHON" -m pip install --no-build-isolation "cython<3.0" setuptools wheel || true
+          fi
+
           p4a apk \
             --private . \
             --package=az.guvende \
