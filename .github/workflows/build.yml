@@ -5,6 +5,11 @@ on:
   push:
     branches: [ main ]
 
+env:
+  PIP_NO_BUILD_ISOLATION: "1"
+  PIP_BREAK_SYSTEM_PACKAGES: "1"
+  MAKEFLAGS: "-j2"
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -19,13 +24,29 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install system and p4a dependencies
+      - name: Configure pip globally
+        run: |
+          set -e
+          mkdir -p "$HOME/.config/pip"
+          cat <<'EOF' > "$HOME/.config/pip/pip.conf"
+[global]
+no-build-isolation = true
+break-system-packages = true
+
+[install]
+no-build-isolation = true
+break-system-packages = true
+EOF
+          sudo mkdir -p /etc
+          sudo cp "$HOME/.config/pip/pip.conf" /etc/pip.conf
+
+      - name: Install system and Python dependencies
         run: |
           set -e
           sudo apt-get update -qq
-          sudo apt-get install -y -qq git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev libltdl-dev wget
+          sudo apt-get install -y -qq git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev libltdl-dev wget ccache
           sudo update-java-alternatives -s java-1.17.0-openjdk-amd64 || true
-          python3 -m pip install --upgrade --break-system-packages pip wheel setuptools "cython<3.0" python-for-android
+          python3 -m pip install --upgrade --no-build-isolation --break-system-packages pip "wheel<0.45" "setuptools<75" "cython<3.0" "build<1.3" python-for-android
 
       - name: Setup Android SDK and NDK
         run: |
@@ -49,10 +70,45 @@ jobs:
           mv "$HOME/android-ndk-r25c" "$ANDROIDNDK"
           rm -f android-ndk.zip
 
+      - name: Prepare hostpython3 and inject Cython paths
+        run: |
+          set -e
+          export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
+          export ANDROIDSDK="$HOME/android-sdk"
+          export ANDROIDNDK="$HOME/android-ndk"
+          export PATH="$JAVA_HOME/bin:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
+          export ANDROIDAPI="33"
+          export NDKAPI="21"
+
+          p4a create --requirements=python3,cython --arch=arm64-v8a --sdk-dir="$ANDROIDSDK" --ndk-dir="$ANDROIDNDK" || true
+
+          SYS_SITE=$(python3 -c "import site; print('\n'.join(site.getsitepackages()))" 2>/dev/null || true)
+
+          while IFS= read -r sp; do
+            if [ -n "$SYS_SITE" ]; then
+              printf "%s\n" "$SYS_SITE" > "$sp/cython_sys.pth"
+            fi
+            cat <<'EOF' > "$sp/sitecustomize.py"
+import os, site
+os.environ["PIP_NO_BUILD_ISOLATION"] = "1"
+os.environ["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+for d in [
+    "/opt/hostedtoolcache/Python/3.10.22/x64/lib/python3.10/site-packages",
+    "/usr/local/lib/python3.10/dist-packages",
+    "/usr/lib/python3/dist-packages",
+]:
+    if os.path.isdir(d) and d not in site.getsitepackages():
+        site.addsitedir(d)
+EOF
+          done < <(find "$HOME/.local/share/python-for-android/build/other_builds/hostpython3" -name "site-packages" -type d 2>/dev/null || true)
+
+          while IFS= read -r py; do
+            if [ -x "$py" ]; then
+              "$py" -m pip install --no-build-isolation --break-system-packages "cython<3.0" "setuptools<75" "wheel<0.45" || true
+            fi
+          done < <(find "$HOME/.local/share/python-for-android/build" -path "*/hostpython3/*" -name "python3*" -type f -executable 2>/dev/null || true)
+
       - name: Build APK directly with python-for-android
-        env:
-          PIP_NO_BUILD_ISOLATION: "1"
-          MAKEFLAGS: "-j2"
         run: |
           set -e
           export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
