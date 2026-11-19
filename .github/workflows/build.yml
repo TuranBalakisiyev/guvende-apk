@@ -38,6 +38,7 @@ jobs:
           mv "$ANDROIDSDK/cmdline-tools/cmdline-tools" "$ANDROIDSDK/cmdline-tools/latest"
           rm cmdline-tools.zip
           yes | head -n 100 | "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROIDSDK" --licenses > /dev/null || true
+          yes | head -n 100 | "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROIDSDK" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
       - name: Build APK directly with python-for-android
         run: |
