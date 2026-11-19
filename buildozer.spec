@@ -5,7 +5,6 @@ package.domain = az.guvende
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,db,sqlite3
 version = 0.1
-requirements = python3,kivy,requests,certifi,urllib3,idna,charset-normalizer,sqlite3
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION
