@@ -23,21 +23,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Configure pip to disable build isolation globally
-        run: |
-          set -e
-          mkdir -p "$HOME/.config/pip"
-          printf "[global]\nno-build-isolation = true\n" > "$HOME/.config/pip/pip.conf"
-          sudo mkdir -p /etc
-          printf "[global]\nno-build-isolation = true\n" | sudo tee /etc/pip.conf > /dev/null
-
-      - name: Install system and p4a dependencies
+      - name: Install system dependencies
         run: |
           set -e
           sudo apt-get update -qq
-          sudo apt-get install -y -qq git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev libltdl-dev wget
+          sudo apt-get install -y -qq git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev libltdl-dev wget ccache
           sudo update-java-alternatives -s java-1.17.0-openjdk-amd64 || true
-          pip install --upgrade --quiet pip wheel setuptools "cython<3.0" python-for-android
+          python3 -m pip install --upgrade --break-system-packages pip "wheel<0.45" "setuptools<75" "cython<3.0" python-for-android
 
       - name: Setup Android SDK and NDK
         run: |
@@ -60,6 +52,25 @@ jobs:
           unzip -q android-ndk.zip -d "$HOME"
           mv "$HOME/android-ndk-r25c" "$ANDROIDNDK"
           rm -f android-ndk.zip
+
+      - name: Prepare hostpython3 with Cython
+        run: |
+          set -e
+          export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
+          export ANDROIDSDK="$HOME/android-sdk"
+          export ANDROIDNDK="$HOME/android-ndk"
+          export PATH="$JAVA_HOME/bin:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
+          export ANDROIDAPI="33"
+          export NDKAPI="21"
+
+          p4a create --requirements=python3,cython --arch=arm64-v8a --sdk-dir="$ANDROIDSDK" --ndk-dir="$ANDROIDNDK" || true
+
+          while IFS= read -r pyexe; do
+            if [ -x "$pyexe" ]; then
+              "$pyexe" -m pip install --no-build-isolation --break-system-packages "cython<3.0" "setuptools<75" "wheel<0.45" 2>/dev/null || \
+              "$pyexe" -m pip install --no-build-isolation "cython<3.0" "setuptools<75" "wheel<0.45" 2>/dev/null || true
+            fi
+          done < <(find "$HOME/.local/share/python-for-android/build" -path "*/hostpython3/*" -name "python3*" -type f -executable 2>/dev/null || true)
 
       - name: Build APK directly with python-for-android
         run: |
@@ -91,6 +102,7 @@ jobs:
           ls -la *.apk || true
 
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: guvende-apk
