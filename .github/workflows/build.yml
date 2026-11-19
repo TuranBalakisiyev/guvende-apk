@@ -7,6 +7,8 @@ on:
 
 env:
   PIP_NO_BUILD_ISOLATION: "1"
+  PIP_BREAK_SYSTEM_PACKAGES: "1"
+  PIP_CONFIG_FILE: "/etc/pip.conf"
   MAKEFLAGS: "-j2"
 
 jobs:
@@ -23,13 +25,28 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install system dependencies
+      - name: Configure global pip.conf
+        run: |
+          set -e
+          sudo mkdir -p /etc "$HOME/.config/pip"
+          cat <<'EOF' | sudo tee /etc/pip.conf > /dev/null
+[global]
+no-build-isolation = true
+break-system-packages = true
+
+[install]
+no-build-isolation = true
+break-system-packages = true
+EOF
+          sudo cp /etc/pip.conf "$HOME/.config/pip/pip.conf"
+
+      - name: Install system and Python build tools
         run: |
           set -e
           sudo apt-get update -qq
           sudo apt-get install -y -qq git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev libltdl-dev wget ccache
           sudo update-java-alternatives -s java-1.17.0-openjdk-amd64 || true
-          python3 -m pip install --upgrade --break-system-packages pip "wheel<0.45" "setuptools<75" "cython<3.0" python-for-android
+          python3 -m pip install --upgrade --no-build-isolation --break-system-packages pip "wheel<0.45" "setuptools<75" "cython<3.0" python-for-android
 
       - name: Setup Android SDK and NDK
         run: |
@@ -53,7 +70,7 @@ jobs:
           mv "$HOME/android-ndk-r25c" "$ANDROIDNDK"
           rm -f android-ndk.zip
 
-      - name: Prepare hostpython3 with Cython
+      - name: Prepare hostpython3 and force no-build-isolation
         run: |
           set -e
           export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
@@ -65,10 +82,18 @@ jobs:
 
           p4a create --requirements=python3,cython --arch=arm64-v8a --sdk-dir="$ANDROIDSDK" --ndk-dir="$ANDROIDNDK" || true
 
-          while IFS= read -r pyexe; do
-            if [ -x "$pyexe" ]; then
-              "$pyexe" -m pip install --no-build-isolation --break-system-packages "cython<3.0" "setuptools<75" "wheel<0.45" 2>/dev/null || \
-              "$pyexe" -m pip install --no-build-isolation "cython<3.0" "setuptools<75" "wheel<0.45" 2>/dev/null || true
+          while IFS= read -r sp; do
+            cat <<'EOF' >> "$sp/sitecustomize.py"
+import os
+os.environ["PIP_NO_BUILD_ISOLATION"] = "1"
+os.environ["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+os.environ["PIP_CONFIG_FILE"] = "/etc/pip.conf"
+EOF
+          done < <(find "$HOME/.local/share/python-for-android/build/other_builds/hostpython3" -name "site-packages" -type d 2>/dev/null || true)
+
+          while IFS= read -r py; do
+            if [ -x "$py" ]; then
+              "$py" -m pip install --no-build-isolation --break-system-packages "cython<3.0" "setuptools<75" "wheel<0.45" || true
             fi
           done < <(find "$HOME/.local/share/python-for-android/build" -path "*/hostpython3/*" -name "python3*" -type f -executable 2>/dev/null || true)
 
@@ -78,32 +103,3 @@ jobs:
           export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
           export ANDROIDSDK="$HOME/android-sdk"
           export ANDROIDNDK="$HOME/android-ndk"
-          export PATH="$JAVA_HOME/bin:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
-          export ANDROIDAPI="33"
-          export NDKAPI="21"
-
-          p4a apk \
-            --private . \
-            --package=az.guvende \
-            --name="Guvende" \
-            --version=0.1 \
-            --bootstrap=sdl2 \
-            --requirements=python3,cython,kivy,requests,certifi,urllib3,idna,charset-normalizer \
-            --arch=arm64-v8a \
-            --sdk-dir="$ANDROIDSDK" \
-            --ndk-dir="$ANDROIDNDK" \
-            --permission=INTERNET \
-            --permission=ACCESS_FINE_LOCATION \
-            --permission=ACCESS_COARSE_LOCATION
-
-      - name: Collect APK files
-        run: |
-          find . -maxdepth 5 -name "*.apk" -exec cp -f {} . \;
-          ls -la *.apk || true
-
-      - name: Upload APK artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: guvende-apk
-          path: "*.apk"
